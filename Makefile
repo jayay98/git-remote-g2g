@@ -1,17 +1,31 @@
-.PHONY: all clean install build fmt
+CMDS ?= git-g2g git-remote-g2g
+# https://pkg.go.dev/go/build
+VERSION := $(shell git describe --tags --always --dirty)
 
-objects := git-g2g git-remote-g2g
+.PHONY: all
+all: fmt unit build
 
-all: fmt build
-
+.PHONY: clean
 clean:
-	$(foreach obj, $(objects), go clean -C cmd/$(obj) -i;)
+	$(foreach obj, $(CMDS), go clean -C cmd/$(obj) -i;)
 
+.PHONY: install
 install:
-	$(foreach obj, $(objects), go install -C cmd/$(obj);)
+	$(foreach obj, $(CMDS), go install -C cmd/$(obj);)
 
+.PHONY: build
 build:
-	$(foreach obj, $(objects), go build -C cmd/$(obj) || exit 1;)
+	$(foreach obj, $(CMDS), go build -C cmd/$(obj) || exit 1;)
 
+.PHONY: fmt
 fmt:
 	gofmt -w -l .
+
+# Unit tests
+.PHONY: test
+test:
+	go test g2g/pkg/pack -count=1
+
+.PHONY: unit
+e2e: install
+	go test g2g/tests -count=1
