@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/pem"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,6 +13,7 @@ import (
 
 	golog "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/network"
 	ma "github.com/multiformats/go-multiaddr"
 )
@@ -23,11 +26,24 @@ func main() {
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	node, err := libp2p.New(
-		libp2p.ListenAddrStrings(specs.HostAddress),
-	)
+	keyPath := "/tmp/key.pem"
+	blob, _ := os.ReadFile(keyPath)
+	block, _ := pem.Decode(blob)
+	if block == nil {
+		log.Fatalf("No PEM blob found")
+	}
+	priv, err := crypto.UnmarshalECDSAPrivateKey(block.Bytes)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Failed to parse private key: %v", err)
+	}
+
+	opts := []libp2p.Option{
+		libp2p.ListenAddrStrings(specs.HostAddress),
+		libp2p.Identity(priv),
+	}
+	node, err := libp2p.New(opts...)
+	if err != nil {
+		log.Fatalf("Failed to parse private key: %v", err)
 	}
 
 	node.SetStreamHandler(specs.UploadPackProto, func(s network.Stream) {
