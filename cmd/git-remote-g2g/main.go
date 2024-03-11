@@ -8,7 +8,6 @@ import (
 	"g2g/pkg/specs"
 	"io"
 	"os"
-	"strings"
 
 	golog "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p"
@@ -48,9 +47,12 @@ func main() {
 		switch {
 		case command == "capabilities\n":
 			PrintCapabilities(os.Stdout)
-		case strings.HasPrefix(command, "connect"):
-			service := strings.TrimSpace(strings.TrimPrefix(command, "connect git-"))
-			if err = ConnectService(node, service, ctx, repo.address.ID); err != nil {
+		case command == "connect git-upload-pack\n":
+			if err = ConnectUploadPack(node, ctx, repo.address.ID); err != nil {
+				logger.Fatalln(err)
+			}
+		case command == "connect git-receive-pack\n":
+			if err = ConnectReceivePack(node, ctx, repo.address.ID); err != nil {
 				logger.Fatalln(err)
 			}
 		default:
@@ -64,40 +66,93 @@ func PrintCapabilities(w io.Writer) {
 	fmt.Fprintln(w, "")
 }
 
-func ConnectService(node host.Host, service string, ctx context.Context, peerId peer.ID) (err error) {
+func ConnectUploadPack(node host.Host, ctx context.Context, peerId peer.ID) (err error) {
 	// Connects to given git service.
-	s, err := node.NewStream(ctx, peerId, specs.HandshakeProto)
+	s, err := node.NewStream(ctx, peerId, specs.UploadPackProto)
 	if err != nil {
 		return err
 	}
 	os.Stdout.WriteString("\n")
 
-	// Inform remote the service used
-	fmt.Fprintln(s, service)
-
 	// After line feed terminating the positive (empty) response, the output of service starts.
+	// Server advertises refs
 	serviceScanner := pack.NewScanner(s)
 	for serviceScanner.Scan() {
-		logger.Debugf("Remote: %q\n", serviceScanner.Text())
 		fmt.Fprint(os.Stdout, serviceScanner.Text())
 		if serviceScanner.Text() == "0000" {
 			break
 		}
 	}
 
+	// Client states "want" and "have"
 	cmdScanner := pack.NewScanner(os.Stdin)
 	for cmdScanner.Scan() {
-		logger.Debugf("cmd: %q\n", cmdScanner.Text())
 		s.Write(cmdScanner.Bytes())
 		if cmdScanner.Text() == "0009done\n" {
 			break
 		}
 	}
 
+	// Server optionally supply packfile
 	for serviceScanner.Scan() {
-		logger.Debugf("Remote: %q\n", serviceScanner.Text())
 		fmt.Fprint(os.Stdout, serviceScanner.Text())
 		if serviceScanner.Text() == "0000" {
+			break
+		}
+	}
+
+	// After the connection ends, the remote helper exits.
+	s.Reset()
+	os.Exit(0)
+	return
+}
+
+func ConnectReceivePack(node host.Host, ctx context.Context, peerId peer.ID) (err error) {
+	// Connects to given git service.
+	s, err := node.NewStream(ctx, peerId, specs.ReceivePackProto)
+	if err != nil {
+		return err
+	}
+	os.Stdout.WriteString("\n")
+
+	// After line feed terminating the positive (empty) response, the output of service starts.
+	// Server advertises refs
+	serviceScanner := pack.NewScanner(s)
+	for serviceScanner.Scan() {
+		fmt.Fprint(os.Stdout, serviceScanner.Text())
+		if serviceScanner.Text() == "0000" {
+			break
+		}
+	}
+
+	// Client states "want" and "have"
+	cmdScanner := pack.NewScanner(os.Stdin)
+	for cmdScanner.Scan() {
+		s.Write(cmdScanner.Bytes())
+		if cmdScanner.Text() == "0000" {
+			break
+		}
+	}
+
+	go func() {
+		r := bufio.NewReader(os.Stdin)
+		b := make([]byte, 1024)
+
+		for {
+			_, err = r.Read(b)
+			if err != nil {
+				logger.Warnln(err)
+			}
+			logger.Infoln(b)
+			s.Write(b)
+		}
+	}()
+
+	// Server ack
+	for serviceScanner.Scan() {
+		logger.Debugln(serviceScanner.Text())
+		fmt.Fprint(os.Stdout, serviceScanner.Text())
+		if serviceScanner.Text() == "000eunpack ok" {
 			break
 		}
 	}
