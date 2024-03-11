@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/pem"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
+	"g2g/pkg/pack"
 	"g2g/pkg/specs"
 
 	golog "github.com/ipfs/go-log/v2"
@@ -46,14 +50,41 @@ func main() {
 		log.Fatalf("Failed to parse private key: %v", err)
 	}
 
-	node.SetStreamHandler(specs.UploadPackProto, func(s network.Stream) {
-		logger.Infof("%s: %s\n", s.Conn().RemotePeer().String(), s.Protocol())
-		UploadPack(s, "/tmp/test_repo")
-	})
+	node.SetStreamHandler(specs.HandshakeProto, func(s network.Stream) {
+		defer s.Reset()
+		service, err := bufio.NewReader(s).ReadString('\n')
+		if err != nil {
+			logger.Warnln(err)
+		}
+		service = strings.TrimSpace(service)
 
-	node.SetStreamHandler(specs.ReceivePackProto, func(s network.Stream) {
-		logger.Infof("%s: %s\n", s.Conn().RemotePeer().String(), s.Protocol())
-		ReceivePack(s, "/tmp/test_repo")
+		cmd := exec.Command("git", service, "/tmp/test_repo")
+		stdin, _ := cmd.StdinPipe() // read fetch-pack, not used
+		stdout, _ := cmd.StdoutPipe()
+
+		go func() {
+			scn := pack.NewScanner(stdout)
+			for scn.Scan() {
+				logger.Warnln(scn.Text())
+				s.Write(scn.Bytes())
+			}
+		}()
+		go func() {
+			scn := pack.NewScanner(s)
+			for scn.Scan() {
+				logger.Warnln(scn.Text())
+				stdin.Write(scn.Bytes())
+			}
+		}()
+
+		if err = cmd.Start(); err != nil {
+			logger.Warnln(err)
+			return
+		}
+
+		if err := cmd.Wait(); err != nil {
+			logger.Fatal(err)
+		}
 	})
 
 	for _, addr := range node.Addrs() {
