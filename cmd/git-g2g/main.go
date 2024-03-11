@@ -59,14 +59,12 @@ func main() {
 		go func() {
 			scn := pack.NewScanner(stdout)
 			for scn.Scan() {
-				logger.Warnln(scn.Text())
 				s.Write(scn.Bytes())
 			}
 		}()
 		go func() {
 			scn := pack.NewScanner(s)
 			for scn.Scan() {
-				logger.Warnln(scn.Text())
 				stdin.Write(scn.Bytes())
 			}
 		}()
@@ -91,14 +89,12 @@ func main() {
 		go func() {
 			scn := pack.NewScanner(stdout)
 			for scn.Scan() {
-				logger.Warnln(scn.Text())
 				s.Write(scn.Bytes())
 			}
 		}()
 		go func() {
 			scn := pack.NewScanner(s)
 			for scn.Scan() {
-				logger.Warnln(scn.Text())
 				stdin.Write(scn.Bytes())
 			}
 
