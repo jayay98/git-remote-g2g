@@ -3,7 +3,7 @@ CMDS ?= git-g2g git-remote-g2g
 VERSION := $(shell git describe --tags --always --dirty)
 
 .PHONY: all
-all: fmt build
+all: fmt test build
 
 .PHONY: clean
 clean:
@@ -20,3 +20,7 @@ build:
 .PHONY: fmt
 fmt:
 	gofmt -w -l .
+
+.PHONY:
+test:
+	go test g2g/tests && go test g2g/pkg/pack
