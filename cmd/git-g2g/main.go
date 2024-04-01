@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/pem"
 	"fmt"
@@ -9,123 +8,79 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
-	"g2g/pkg/pack"
 	"g2g/pkg/specs"
 
 	golog "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/libp2p/go-libp2p/core/network"
-	ma "github.com/multiformats/go-multiaddr"
+	"github.com/libp2p/go-libp2p/core/protocol"
 )
 
 var logger = golog.Logger("git-server")
 
 func main() {
-	golog.SetAllLoggers(golog.LevelInfo)
-
-	_, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	keyPath := "/tmp/key.pem"
-	blob, _ := os.ReadFile(keyPath)
-	block, _ := pem.Decode(blob)
-	if block == nil {
-		log.Fatalf("No PEM blob found")
+	// Initialize FS
+	appDir := getAppDir()
+	if err := mkDir(appDir); err != nil {
+		logger.Fatalf("Failed to initialize application directory: %v", err)
 	}
-	priv, err := crypto.UnmarshalECDSAPrivateKey(block.Bytes)
+	repoDir := getRepositoryDir()
+	if err := mkDir(repoDir); err != nil {
+		logger.Fatalf("Failed to initialize repository directory: %v", err)
+	}
+	priv, err := loadPrivateKey()
 	if err != nil {
-		log.Fatalf("Failed to parse private key: %v", err)
+		logger.Fatalf("Failed to load private key: %v", err)
 	}
 
+	// Initialize libp2p Host
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(specs.HostAddress),
 		libp2p.Identity(priv),
 	}
 	node, err := libp2p.New(opts...)
 	if err != nil {
-		log.Fatalf("Failed to parse private key: %v", err)
+		logger.Fatalf("Failed to parse private key: %v", err)
 	}
-
-	node.SetStreamHandler(specs.UploadPackProto, func(s network.Stream) {
-		defer s.Reset()
-
-		cmd := exec.Command("git", "upload-pack", "/tmp/test_repo")
-		stdin, _ := cmd.StdinPipe() // read fetch-pack, not used
-		stdout, _ := cmd.StdoutPipe()
-
-		go func() {
-			scn := pack.NewScanner(stdout)
-			for scn.Scan() {
-				s.Write(scn.Bytes())
-			}
-		}()
-		go func() {
-			scn := pack.NewScanner(s)
-			for scn.Scan() {
-				stdin.Write(scn.Bytes())
-			}
-		}()
-
-		if err = cmd.Start(); err != nil {
-			logger.Warnln(err)
-			return
-		}
-
-		if err := cmd.Wait(); err != nil {
-			logger.Fatal(err)
-		}
-	})
-
-	node.SetStreamHandler(specs.ReceivePackProto, func(s network.Stream) {
-		defer s.Reset()
-
-		cmd := exec.Command("git", "receive-pack", "/tmp/test_repo")
-		stdin, _ := cmd.StdinPipe() // read fetch-pack, not used
-		stdout, _ := cmd.StdoutPipe()
-
-		go func() {
-			scn := pack.NewScanner(stdout)
-			for scn.Scan() {
-				s.Write(scn.Bytes())
-			}
-		}()
-		go func() {
-			scn := pack.NewScanner(s)
-			for scn.Scan() {
-				stdin.Write(scn.Bytes())
-			}
-
-			r := bufio.NewReader(s)
-			b := make([]byte, 512)
-
-			for {
-				r.Read(b)
-				stdin.Write(b)
-			}
-		}()
-
-		if err = cmd.Start(); err != nil {
-			logger.Warnln(err)
-			return
-		}
-
-		if err := cmd.Wait(); err != nil {
-			logger.Fatal(err)
-		}
-	})
-
-	for _, addr := range node.Addrs() {
-		hostAddr, _ := ma.NewMultiaddr(fmt.Sprintf("/p2p/%s", node.ID().Pretty()))
-		p2pAddr := addr.Encapsulate(hostAddr).String()
-		fmt.Printf("Serving on g2g://%s\n", p2pAddr)
-	}
-
 	defer node.Close()
+	log.Printf("Host ID: %s", node.ID().Pretty())
 
+	dhtopts := []dht.Option{dht.BootstrapPeersFunc(dht.GetDefaultBootstrapPeerAddrInfos), dht.Mode(dht.ModeServer)}
+	kdht, err := dht.New(ctx, node, dhtopts...)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	if err = kdht.Bootstrap(ctx); err != nil {
+		logger.Fatal(err)
+	}
+
+	// Associate stream protocols to git services
+	node.SetStreamHandlerMatch(specs.UploadPackProto, func(i protocol.ID) bool { return strings.HasPrefix(string(i), specs.UploadPackProto) }, uploadPackHandler)
+	node.SetStreamHandlerMatch(specs.ReceivePackProto, func(i protocol.ID) bool { return strings.HasPrefix(string(i), specs.ReceivePackProto) }, receivePackHandler)
+
+	// git-g2g terminates upon Ctrl-C
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
 	<-sigCh
+}
+
+func loadPrivateKey() (crypto.PrivKey, error) {
+	keyPath := getPrivKeyPath()
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		exec.Command("ssh-keygen", "-t", "ecdsa", "-q", "-f", keyPath, "-N", "", "-m", "PEM").Run()
+	}
+	blob, _ := os.ReadFile(keyPath)
+	block, _ := pem.Decode(blob)
+	if block == nil {
+		return nil, fmt.Errorf("no PEM blob found")
+	}
+	return crypto.UnmarshalECDSAPrivateKey(block.Bytes)
 }

@@ -2,42 +2,30 @@ package tests
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"os"
 	"os/exec"
 	"path"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func InitBareRepository(t *testing.T) (string, error) {
-	// dir := t.TempDir()
-	dir := "/tmp/test_repo"
-	_, err := exec.Command("git", "init", "--bare", dir).Output()
+	home, _ := os.UserHomeDir()
+	parentDir := path.Join(home, ".g2g", "repos")
+	dir, _ := os.MkdirTemp(parentDir, "*.git")
+	_, err := exec.Command("git", "init", "--bare", dir).CombinedOutput()
 	return dir, err
 }
 
-func CreatePrivateKey(keyPath string) error {
-	_, err := exec.Command("ssh-keygen", "-t", "ecdsa", "-q", "-f", keyPath, "-N", "", "-m", "PEM").Output()
-	return err
-}
-
 func TestMain(t *testing.T) {
-	if err := CreatePrivateKey("/tmp/key.pem"); err != nil {
-		t.Error("Could not initiate private key.")
-	}
-	defer os.Remove("/tmp/key.pem")
-	defer os.Remove("/tmp/key.pem.pub")
-
 	dir, err := InitBareRepository(t)
-	if err != nil {
-		t.Error("Could not initiate random bare repository.")
-	}
-	defer os.RemoveAll(dir)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Cleanup(func() { os.RemoveAll(dir); cancel() })
 
 	server := exec.CommandContext(ctx, "git-g2g", "git", "g2g")
 	serverOut, _ := server.StdoutPipe()
@@ -50,47 +38,36 @@ func TestMain(t *testing.T) {
 		ch <- ma
 		close(ch)
 	}()
-	if err = server.Start(); err != nil {
-		t.Error(err)
-	}
+	require.NoError(t, server.Start())
 
 	go func() {
 		addr := <-ch
+		remoteAddr := addr + "/" + path.Base(dir)
 		cloneDir := t.TempDir()
-		if err := exec.Command("git", "clone", addr, cloneDir).Run(); err != nil {
-			t.Fail()
-		}
+		require.NoError(t, exec.Command("git", "clone", remoteAddr, cloneDir).Run())
 
 		os.WriteFile(path.Join(cloneDir, "README.md"), []byte("# Sample"), 0644)
 		cmd := exec.Command("git", "add", ".")
 		cmd.Dir = cloneDir
-		if err = cmd.Run(); err != nil {
-			t.Error(err)
-		}
+		require.NoError(t, cmd.Run())
 
 		cmd = exec.Command("git", "commit", "-m", "First commit")
 		cmd.Dir = cloneDir
-		if err = cmd.Run(); err != nil {
-			t.Error(err)
-		}
+		require.NoError(t, cmd.Run())
 
 		cmd = exec.Command("git", "push")
 		cmd.Dir = cloneDir
-		if err = cmd.Run(); err != nil {
-			t.Error(err)
-		}
+		require.NoError(t, cmd.Run())
 
 		cmd = exec.Command("git", "--no-pager", "log", "--pretty=oneline")
-		cmd.Dir = "/tmp/test_repo"
+		cmd.Dir = dir
 		serverLog, _ := cmd.Output()
 
 		cmd = exec.Command("git", "--no-pager", "log", "--pretty=oneline")
 		cmd.Dir = cloneDir
 		clientLog, _ := cmd.Output()
 
-		if !bytes.Equal(serverLog, clientLog) {
-			t.Fail()
-		}
+		require.Equal(t, serverLog, clientLog)
 		cancel()
 	}()
 
