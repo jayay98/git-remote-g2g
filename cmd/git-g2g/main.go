@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/pem"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -50,7 +49,7 @@ func main() {
 		logger.Fatalf("Failed to parse private key: %v", err)
 	}
 	defer node.Close()
-	log.Printf("Host ID: %s", node.ID().Pretty())
+	fmt.Printf("Host ID: %s", node.ID().Pretty())
 
 	dhtopts := []dht.Option{dht.BootstrapPeersFunc(dht.GetDefaultBootstrapPeerAddrInfos), dht.Mode(dht.ModeServer)}
 	kdht, err := dht.New(ctx, node, dhtopts...)
