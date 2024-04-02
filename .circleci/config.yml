@@ -61,3 +61,10 @@ workflows:
       - build-release:
           requires:
             - test
+          # New release only on tagged commit
+          filters:
+            tags:
+              only: 
+                - /^v.*/
+            branches:
+              ignore: /.*/
