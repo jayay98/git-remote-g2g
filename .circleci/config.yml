@@ -4,11 +4,13 @@
 # For a detailed guide to building and testing with Go, read the docs:
 # https://circleci.com/docs/language-go/ for more details
 version: 2.1
+orbs:
+  go: circleci/go@1.11.0
 
 # Define a job to be invoked later in a workflow.
 # See: https://circleci.com/docs/jobs-steps/#jobs-overview & https://circleci.com/docs/configuration-reference/#jobs
 jobs:
-  build:
+  test:
     # Specify the execution environment. You can specify an image from Docker Hub or use one of our convenience images from CircleCI's Developer Hub.
     # See: https://circleci.com/docs/executor-intro/ & https://circleci.com/docs/configuration-reference/#executor-job
     docker:
@@ -32,15 +34,21 @@ jobs:
           paths:
             - "/go/pkg/mod"
       - run:
-          name: Install binaries
-          command: make install
-      - run:
           name: Run tests
           command: |
             mkdir -p /tmp/test-reports
             gotestsum --junitfile /tmp/test-reports/unit-tests.xml
       - store_test_results:
           path: /tmp/test-reports
+  build-release:
+    executor:
+      name: go/default
+      tag: 1.20.8
+    steps:
+      - go/install-goreleaser
+      - go/goreleaser-release:
+          publish-release: true
+          validate-yaml: true  
 
 # Orchestrate jobs using workflows
 # See: https://circleci.com/docs/workflows/ & https://circleci.com/docs/configuration-reference/#workflows
@@ -48,4 +56,7 @@ workflows:
   sample: # This is the name of the workflow, feel free to change it to better match your workflow.
     # Inside the workflow, you define the jobs you want to run.
     jobs:
-      - build
+      - test
+      - build-release:
+          requires:
+            - test
