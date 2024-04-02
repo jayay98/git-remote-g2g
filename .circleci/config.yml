@@ -5,7 +5,7 @@
 # https://circleci.com/docs/language-go/ for more details
 version: 2.1
 orbs:
-  go: circleci/go@1.11.0
+  go: circleci/go@1.11
 
 # Define a job to be invoked later in a workflow.
 # See: https://circleci.com/docs/jobs-steps/#jobs-overview & https://circleci.com/docs/configuration-reference/#jobs
@@ -41,14 +41,15 @@ jobs:
       - store_test_results:
           path: /tmp/test-reports
   build-release:
-    executor:
-      name: go/default
-      tag: 1.20.8
+    docker:
+      - image: cimg/go:1.21
     steps:
+      - checkout
       - go/install-goreleaser
       - go/goreleaser-release:
           publish-release: true
-          validate-yaml: true  
+          validate-yaml: true 
+          project-path: .
 
 # Orchestrate jobs using workflows
 # See: https://circleci.com/docs/workflows/ & https://circleci.com/docs/configuration-reference/#workflows
