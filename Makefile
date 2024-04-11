@@ -1,4 +1,4 @@
-CMDS ?= git-g2g git-remote-g2g
+CMDS ?= git-g2g git-remote-g2g git-ui
 # https://pkg.go.dev/go/build
 VERSION := $(shell git describe --tags --always --dirty)
 
