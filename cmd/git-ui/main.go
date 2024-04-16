@@ -3,11 +3,9 @@ package main
 import (
 	"image/color"
 	"io"
-	"io/fs"
 	"log"
+	"os"
 	"path"
-	"path/filepath"
-	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -16,36 +14,39 @@ import (
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/go-git/go-billy/v5/memfs"
+	"github.com/go-git/go-billy/v5/util"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage/memory"
 )
 
 func main() {
 	myApp := app.New()
 	myWindow := myApp.NewWindow("Table Widget")
-	repoPath := "."
 
 	var err error
-	r, err := git.PlainOpen(repoPath)
+	mfs := memfs.New()
+	r, err := git.Clone(memory.NewStorage(), mfs, &git.CloneOptions{
+		URL: "file:///Users/blank/Documents/sandbox/g2g",
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	filepaths := make(map[string][]string)
 	latestCommits := make(map[string]*object.Commit)
-	filepath.WalkDir(repoPath, func(p string, d fs.DirEntry, err error) error {
-		if p == "." || p == ".git" || strings.HasPrefix(p, ".git/") {
+
+	util.Walk(mfs, ".", func(p string, info os.FileInfo, err error) error {
+		if p == "." {
 			return nil
 		}
 
 		dir := path.Dir(p)
-		_, ok := filepaths[dir]
-		if !ok {
-			filepaths[dir] = []string{}
-		}
 		filepaths[dir] = append(filepaths[dir], p)
-
-		if !d.IsDir() {
+		if info.IsDir() {
+			filepaths[p] = []string{}
+		} else {
 			commits, _ := r.Log(&git.LogOptions{FileName: &p})
 			commit, err := commits.Next()
 			if err != nil {
