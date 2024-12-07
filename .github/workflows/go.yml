@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Set up Go 1.19
-        uses: actions/setup-go@v1
+        uses: actions/setup-go@v5
         with:
           go-version: stable
       - name: Check out code
